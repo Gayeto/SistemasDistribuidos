@@ -18,6 +18,17 @@ def sincronizar_reloj(reloj_recibido):
     global reloj_lamport
     reloj_lamport = max(reloj_lamport, reloj_recibido) + 1
 
+def notificar_servidores(mensaje):
+    """Envia la solicitud de reserva a otros servidores."""
+    for servidor_host, puerto_servidor in servidores:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((servidor_host, puerto_servidor))
+            s.send(mensaje.encode())
+            s.close()
+        except Exception:
+            pass  # Si un servidor no responde, se ignora
+
 def manejar_cliente(cliente_socket, direccion):
     """Maneja las conexiones de los clientes."""
     global reloj_lamport
@@ -29,7 +40,6 @@ def manejar_cliente(cliente_socket, direccion):
             if not mensaje:
                 break
 
-            # Extraer información del mensaje
             partes = mensaje.split(":")
             tipo_mensaje = partes[0]
             reloj_recibido = int(partes[1])
@@ -38,12 +48,14 @@ def manejar_cliente(cliente_socket, direccion):
             sincronizar_reloj(reloj_recibido)
 
             if tipo_mensaje == "RESERVA":
-                # Agregar a la cola de solicitudes
                 cola_solicitudes.put((reloj_lamport, direccion))
-                print(f"Solicitud de reserva añadida con reloj {reloj_lamport}")
+                print(f"Reserva añadida con reloj {reloj_lamport}")
 
-                # Responder confirmación
-                respuesta = f"Reserva confirmada en servidor. Reloj: {reloj_lamport}"
+                # Notificar a otros servidores
+                notificar_servidores(f"CONFIRMACION:{reloj_lamport}")
+
+                # Responder confirmación al cliente
+                respuesta = f"Reserva confirmada. Reloj: {reloj_lamport}"
                 cliente_socket.send(respuesta.encode())
 
         except Exception as e:
@@ -52,6 +64,16 @@ def manejar_cliente(cliente_socket, direccion):
 
     cliente_socket.close()
 
+def manejar_servidor(servidor_socket):
+    """Maneja mensajes de otros servidores."""
+    while True:
+        conexion, _ = servidor_socket.accept()
+        mensaje = conexion.recv(1024).decode()
+        partes = mensaje.split(":")
+        if partes[0] == "CONFIRMACION":
+            sincronizar_reloj(int(partes[1]))
+        conexion.close()
+
 def iniciar_servidor(puerto):
     """Inicia el servidor y acepta conexiones."""
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -59,12 +81,13 @@ def iniciar_servidor(puerto):
     servidor.listen(5)
     print(f"Servidor corriendo en el puerto {puerto}")
 
+    # Hilo para manejar conexiones de otros servidores
+    threading.Thread(target=manejar_servidor, args=(servidor,)).start()
+
     while True:
         cliente_socket, direccion = servidor.accept()
-        hilo_cliente = threading.Thread(target=manejar_cliente, args=(cliente_socket, direccion))
-        hilo_cliente.start()
+        threading.Thread(target=manejar_cliente, args=(cliente_socket, direccion)).start()
 
 if __name__ == "__main__":
     puerto_servidor = int(input("Introduce el puerto del servidor: "))  
     iniciar_servidor(puerto_servidor)
-
